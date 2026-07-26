@@ -110,6 +110,10 @@ Route::middleware(['jwt.auth', 'active.user'])->group(function () {
         Route::get('equb-packages/{equbPackage}', [MemberEqubPackageController::class, 'show']);
         Route::get('equb-groups', [MemberEqubGroupController::class, 'index']);
         Route::get('equb-groups/{equbGroup}', [MemberEqubGroupController::class, 'show']);
+        
+        // 👉 ADD THIS LINE TO FIX THE ERROR
+        Route::apiResource('equb-sub-groups', \App\Http\Controllers\Api\Member\EqubSubGroupController::class);
+
         Route::get('equb-memberships', [MemberEqubMembershipController::class, 'index']);
         Route::post('equb-memberships', [MemberEqubMembershipController::class, 'store']);
         Route::get('equb-memberships/{equbMembership}', [MemberEqubMembershipController::class, 'show']);
