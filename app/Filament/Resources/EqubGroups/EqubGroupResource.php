@@ -24,6 +24,7 @@ class EqubGroupResource extends Resource
 {
     protected static ?string $model = EqubGroup::class;
 
+
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedUserGroup;
 
     public static function getNavigationLabel(): string

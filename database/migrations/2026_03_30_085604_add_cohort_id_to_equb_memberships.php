@@ -22,8 +22,9 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('equb_memberships', function (Blueprint $table) {
-            //
-            
+            // Explicitly drop foreign key constraint first
+            $table->dropForeign(['cohort_id']); 
+            $table->dropColumn('cohort_id');
         });
     }
 };

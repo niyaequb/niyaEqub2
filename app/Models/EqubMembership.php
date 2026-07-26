@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Log;
 
 class EqubMembership extends Model
 {
-    protected $fillable = ['equb_group_id', 'member_id', 'cohort_id', 'contribution_amount', 'contribution_frequency_days', 'join_date', 'calculated_end_date', 'draw_position', 'has_won', 'win_date', 'status', 'last_overdue_notified_at'];
+    protected $fillable = ['equb_group_id', 'member_id', 'cohort_id', 'contribution_amount', 'contribution_frequency_days', 'join_date', 'calculated_end_date', 'draw_position', 'has_won', 'win_date', 'status', 'last_overdue_notified_at', 'equb_sub_group_id',];
 
     protected function casts(): array
     {
@@ -175,4 +175,16 @@ class EqubMembership extends Model
 
         return $nearestDate;
     }
+
+    public function subGroups()
+    {
+        return $this->belongsToMany(EqubSubGroup::class, 'equb_sub_group_member', 'member_id', 'equb_sub_group_id')
+                    ->withTimestamps();
+    }
+
+    public function equbSubGroup(): BelongsTo
+    {
+        return $this->belongsTo(EqubSubGroup::class, 'equb_sub_group_id');
+    }
+
 }

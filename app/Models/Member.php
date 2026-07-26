@@ -29,6 +29,7 @@ class Member extends Model
         'registered_via',
         'referral_code_used',
         'registered_at',
+        'equb_sub_group_id',
     ];
 
     protected function casts(): array
@@ -79,5 +80,16 @@ class Member extends Model
     public function equbMemberships(): HasMany
     {
         return $this->hasMany(EqubMembership::class);
+    }
+
+
+    public function equbSubGroup(): BelongsTo
+    {
+        return $this->belongsTo(EqubSubGroup::class, 'equb_sub_group_id');
+    }
+
+    public function subGroups()
+    {
+        return $this->belongsToMany(EqubSubGroup::class, 'equb_sub_group_member', 'member_id', 'equb_sub_group_id');
     }
 }

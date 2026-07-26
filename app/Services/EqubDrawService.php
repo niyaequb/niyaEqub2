@@ -17,7 +17,6 @@ class EqubDrawService
         protected FcmService $fcmService,
     ) {}
 
-
     /**
      * Run a draw for an Equb group. Picks a random eligible membership (active, paid, has_won=false),
      * records the draw, updates winner, and sends notifications.
@@ -116,26 +115,49 @@ class EqubDrawService
         $winner = $this->pickWeightedWinner($eligible);
 
         try {
-            $draw = DB::transaction(function () use ($group, $winner, $executedByAdminId) {
-                $draw = EqubDraw::create([
-                    'equb_group_id' => $group->id,
-                    'draw_date' => now(),
-                    'executed_by_admin_id' => $executedByAdminId,
-                    'winner_membership_id' => $winner->id,
-                ]);
+            $allDrawsForWinner = [];
 
-                $winner->update([
-                    'has_won' => true,
-                    'win_date' => now(),
-                ]);
+            $draw = DB::transaction(function () use ($group, $winner, $executedByAdminId, &$allDrawsForWinner) {
+                
+                // --- SUB-GROUP SUPPORT: Expand the winning ticket to all sub-group members ---
+                $winningMembers = $winner->equb_sub_group_id
+                    ? EqubMembership::where('equb_sub_group_id', $winner->equb_sub_group_id)->get()
+                    : collect([$winner]);
 
-                // Check for individual completion
-                app(\App\Services\EqubMembershipService::class)->completeIfEligible($winner);
+                $firstDraw = null;
 
-                return $draw->load(['winnerMembership.member.user', 'equbGroup']);
+                foreach ($winningMembers as $wMember) {
+                    $d = EqubDraw::create([
+                        'equb_group_id' => $group->id,
+                        'draw_date' => now(),
+                        'executed_by_admin_id' => $executedByAdminId,
+                        'winner_membership_id' => $wMember->id,
+                    ]);
+
+                    $wMember->update([
+                        'has_won' => true,
+                        'win_date' => now(),
+                    ]);
+
+                    // Check for individual completion
+                    app(\App\Services\EqubMembershipService::class)->completeIfEligible($wMember);
+
+                    $loadedDraw = $d->load(['winnerMembership.member.user', 'equbGroup']);
+                    $allDrawsForWinner[] = $loadedDraw;
+
+                    if (!$firstDraw) {
+                        $firstDraw = $loadedDraw;
+                    }
+                }
+
+                // Return the representative draw to keep the method signature intact
+                return $firstDraw; 
             });
 
-            $this->sendWinnerNotifications($draw);
+            // --- SUB-GROUP SUPPORT: Send notifications to ALL winning members of the group ---
+            foreach ($allDrawsForWinner as $winningDraw) {
+                $this->sendWinnerNotifications($winningDraw);
+            }
 
             if (!$skipTopicNotifications) {
                 // Send FCM "Draw Completed" notification to the topic
@@ -147,13 +169,6 @@ class EqubDrawService
                     'winner_membership_id' => (string) $draw->winner_membership_id,
                 ], "Equb Draw Result", "The winner for {$groupName} has been announced!");
             }
-
-            // Check if every active member has won to mark group as completed
-            // $remaining = EqubMembership::query()->where('equb_group_id', $group->id)->where('status', EqubMembershipStatus::Active)->where('has_won', false)->count();
-
-            // if ($remaining === 0) {
-            //     $group->update(['status' => \App\Enums\EqubGroupStatus::Completed]);
-            // }
 
             return ['success' => true, 'draw' => $draw];
         } catch (\Throwable $e) {
@@ -205,7 +220,7 @@ class EqubDrawService
             ->values()
             ->toArray();
 
-            // i want to update the member Names list to be like 00.id like 001, 002, 003 and so on instead of the phone numbers
+        // i want to update the member Names list to be like 00.id like 001, 002, 003 and so on instead of the phone numbers
         $memberNames = array_map(fn($id) => str_pad($id, 3, '0', STR_PAD_LEFT), $memberNames);
 
         $this->fcmService->sendToTopic($topic, [
@@ -238,38 +253,35 @@ class EqubDrawService
         try {
             DB::beginTransaction();
 
-            foreach ($winners as $winner) {
-                $draw = EqubDraw::create([
-                    'equb_group_id' => $group->id,
-                    'draw_date' => now(),
-                    'executed_by_admin_id' => $executedByAdminId,
-                    'winner_membership_id' => $winner->id,
-                ]);
+            foreach ($winners as $winnerRep) {
+                
+                // --- SUB-GROUP SUPPORT: Expand the chosen ticket for batch drawing ---
+                $winningMembers = $winnerRep->equb_sub_group_id
+                    ? EqubMembership::where('equb_sub_group_id', $winnerRep->equb_sub_group_id)->get()
+                    : collect([$winnerRep]);
 
-                $winner->update([
-                    'has_won' => true,
-                    'win_date' => now(),
-                ]);
+                foreach ($winningMembers as $wMember) {
+                    $draw = EqubDraw::create([
+                        'equb_group_id' => $group->id,
+                        'draw_date' => now(),
+                        'executed_by_admin_id' => $executedByAdminId,
+                        'winner_membership_id' => $wMember->id,
+                    ]);
 
-                // Check for individual completion
-                app(\App\Services\EqubMembershipService::class)->completeIfEligible($winner);
+                    $wMember->update([
+                        'has_won' => true,
+                        'win_date' => now(),
+                    ]);
 
-                $draws[] = $draw->load(['winnerMembership.member.user', 'equbGroup']);
-                $winnerNames[] = $winner->member->id ?? 'Unknown Member';
+                    // Check for individual completion
+                    app(\App\Services\EqubMembershipService::class)->completeIfEligible($wMember);
 
-                $this->sendWinnerNotifications($draw);
+                    $draws[] = $draw->load(['winnerMembership.member.user', 'equbGroup']);
+                    $winnerNames[] = $wMember->member->id ?? 'Unknown Member';
+
+                    $this->sendWinnerNotifications($draw);
+                }
             }
-
-            // Check if every active member has won to mark group as completed
-            // $totalRemaining = EqubMembership::query()
-            //     ->where('equb_group_id', $group->id)
-            //     ->where('status', \App\Enums\EqubMembershipStatus::Active)
-            //     ->where('has_won', false)
-            //     ->count();
-
-            // if ($totalRemaining === 0) {
-            //     $group->update(['status' => \App\Enums\EqubGroupStatus::Completed]);
-            // }
 
             $winnerNames = array_map(fn($id) => str_pad($id, 3, '0', STR_PAD_LEFT), $winnerNames);
 
@@ -281,7 +293,7 @@ class EqubDrawService
                 'type' => 'equb_draw_completed',
                 'equb_group_id' => (string) $group->id,
                 'winners' => json_encode($winnerNames),
-                'winner_name' => $winnerNames[0], // Fallback for apps expecting single winner
+                'winner_name' => $winnerNames[0] ?? 'Unknown', // Fallback for apps expecting single winner
                 'draw_count' => (string) $toDrawCount
             ], "Equb Draw Result", "The winners for {$groupName} are: {$winnersList}");
 
@@ -317,16 +329,46 @@ class EqubDrawService
 
     /**
      * Get memberships eligible for draw: active, has_won=false, and (simplified) at least one paid payment.
+     * Integrates Sub-Group logic to ensure strict eligibility across grouped members.
      */
     protected function getEligibleMemberships(EqubGroup $group)
     {
-        return EqubMembership::query()
+        $baseEligible = EqubMembership::query()
             ->with('cohort')
             ->where('equb_group_id', $group->id)
             ->where('status', EqubMembershipStatus::Active)
             ->where('has_won', false)
             ->whereHas('payments', fn($q) => $q->where('status', EqubPaymentStatus::Paid))
             ->get();
+
+        $finalEligible = collect();
+        
+        // --- SUB-GROUP SUPPORT: Group memberships to evaluate their collective standing ---
+        $grouped = $baseEligible->groupBy('equb_sub_group_id');
+
+        foreach ($grouped as $subGroupId => $members) {
+            if (empty($subGroupId)) {
+                // Individuals (No Sub-Group) - add all of them normally
+                foreach ($members as $member) {
+                    $finalEligible->push($member);
+                }
+            } else {
+                // Sub-group: We must ensure ALL active members of this subgroup are eligible
+                $totalActiveInSubGroup = EqubMembership::where('equb_sub_group_id', $subGroupId)
+                    ->where('status', EqubMembershipStatus::Active)
+                    ->count();
+
+                // If the number of eligible members matches the total active members in the subgroup
+                // it means NO ONE in the subgroup is defaulting.
+                if ($members->count() === $totalActiveInSubGroup) {
+                    // Add only the FIRST member as the "Representative Ticket" for the draw
+                    // so the group gets exactly one combined chance to win.
+                    $finalEligible->push($members->first());
+                }
+            }
+        }
+
+        return $finalEligible;
     }
 
     protected function sendWinnerNotifications(EqubDraw $draw): void
@@ -336,17 +378,12 @@ class EqubDrawService
         $user = $member->user;
         $phone = $user?->phone;
         $groupName = $draw->equbGroup?->name ?? 'Niya Equb';
-        $amountWon = number_format($membership->expected_total_amount, 2);
-        $paid = number_format($membership->total_paid, 2);
-        $remaining = number_format($membership->remaining_amount, 2);
-
+        
         $message = "Congratulations! You have won the draw for {$groupName}. " . 'Win date: ' . $draw->draw_date->format('Y-m-d');
 
         if ($phone) {
             $this->smsService->sendSms($phone, $message, null, $draw);
         }
-
-        // For minimal integration we only do SMS; you can add Notification::send() here.
     }
 
     /**
@@ -380,5 +417,62 @@ class EqubDrawService
         }
 
         return $memberships->last();
+    }
+
+    /**
+     * Identify and notify sub-group members who have not paid, holding up their group.
+     */
+    public function notifySubGroupDefaulters(int $equbGroupId): array
+    {
+        $group = EqubGroup::find($equbGroupId);
+        
+        if (!$group) {
+            return ['success' => false, 'message' => 'Equb group not found.'];
+        }
+
+        // Get all active sub-groups for this Equb
+        $subGroups = \App\Models\EqubSubGroup::where('equb_group_id', $group->id)
+            ->where('has_won', false)
+            ->with(['memberships.member.user', 'memberships.payments' => function($q) {
+                // Adjust this logic based on how you determine if the CURRENT round is paid
+                $q->where('status', EqubPaymentStatus::Paid); 
+            }])
+            ->get();
+
+        $notificationsSent = 0;
+        $defaultersList = [];
+
+        foreach ($subGroups as $subGroup) {
+            $members = $subGroup->memberships->where('status', EqubMembershipStatus::Active);
+            $unpaidMembers = collect();
+
+            // Find exactly who didn't pay
+            foreach ($members as $member) {
+                if ($member->payments->isEmpty()) {
+                    $unpaidMembers->push($member);
+                }
+            }
+
+            // If there are unpaid members, the group is held back. Notify them!
+            if ($unpaidMembers->isNotEmpty()) {
+                foreach ($unpaidMembers as $defaulter) {
+                    $phone = $defaulter->member->user->phone ?? null;
+                    $groupName = $subGroup->name;
+                    
+                    if ($phone) {
+                        $message = "Urgent: Your Equb group '{$groupName}' is on hold! You have pending payments preventing your group from entering the draw. Please pay immediately.";
+                        $this->smsService->sendSms($phone, $message);
+                        $notificationsSent++;
+                        $defaultersList[] = $phone;
+                    }
+                }
+            }
+        }
+
+        return [
+            'success' => true, 
+            'message' => "Notified {$notificationsSent} defaulters.",
+            'defaulters' => $defaultersList
+        ];
     }
 }

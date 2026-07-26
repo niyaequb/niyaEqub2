@@ -89,4 +89,15 @@ class EqubGroup extends Model
 
         return true;
     }
+
+    // Add this relationship to your existing EqubGroup model
+    public function subGroups(): HasMany
+    {
+        return $this->hasMany(EqubSubGroup::class);
+    }
+
+    public function equbGroup(): BelongsTo
+    {
+        return $this->belongsTo(EqubGroup::class, 'equb_group_id');
+    }
 }
