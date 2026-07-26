@@ -11,6 +11,58 @@ use Illuminate\Support\Facades\Log;
 
 class EqubSubGroupController extends Controller
 {
+    /**
+     * GET /api/member/equb-sub-groups
+     * Fetches all sub-groups created by or joined by the authenticated user.
+     */
+    public function index(Request $request)
+    {
+        try {
+            $user = $request->user();
+
+            // Safely resolve the member record
+            $member = $user?->member;
+
+            if (! $member) {
+                return response()->json([
+                    'success' => true,
+                    'data'    => [],
+                ], 200);
+            }
+
+            // Fetch groups where the member is either the inviter OR listed in the members relation
+            $subGroups = EqubSubGroup::query()
+                ->with(['equbGroup', 'members'])
+                ->withCount('members')
+                ->where('inviter_member_id', $member->id)
+                ->orWhereHas('members', function ($q) use ($member) {
+                    $q->where('members.id', $member->id);
+                })
+                ->latest()
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data'    => $subGroups,
+            ], 200);
+
+        } catch (\Throwable $e) {
+            Log::error('Fetch SubGroups Failed: ' . $e->getMessage(), [
+                'exception' => $e,
+                'user_id'   => $request->user()?->id,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch group equbs: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/member/equb-sub-groups
+     * Creates a new sub-group.
+     */
     public function store(Request $request)
     {
         // 1. Validate incoming request
