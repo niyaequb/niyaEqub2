@@ -186,9 +186,9 @@ class EqubSubGroupController extends Controller
                 ->with('user')
                 ->where(function ($q) use ($query) {
                     $q->whereHas('user', function ($userQuery) use ($query) {
-                        $userQuery->where('phone', 'like', "%{$query}%")
-                            ->orWhere('name', 'like', "%{$query}%");
-                    })->orWhere('full_name', 'like', "%{$query}%");
+                        $userQuery->where('phone', 'ilike', "%{$query}%")
+                            ->orWhere('name', 'ilike', "%{$query}%");
+                    })->orWhere('full_name', 'ilike', "%{$query}%");
                 })
                 ->when($currentMember, fn ($q) => $q->where('id', '!=', $currentMember->id))
                 ->limit(15)
