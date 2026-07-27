@@ -115,6 +115,8 @@ Route::middleware(['jwt.auth', 'active.user'])->group(function () {
         Route::apiResource('equb-sub-groups', \App\Http\Controllers\Api\Member\EqubSubGroupController::class);
         Route::post('equb-sub-groups/{id}/add-member', [\App\Http\Controllers\Api\Member\EqubSubGroupController::class, 'addMember']);
         Route::delete('equb-sub-groups/{id}/remove-member/{memberId}', [\App\Http\Controllers\Api\Member\EqubSubGroupController::class, 'removeMember']);
+        Route::get('members/search', [\App\Http\Controllers\Api\Member\EqubSubGroupController::class, 'searchMembers']);
+        
 
         Route::get('equb-memberships', [MemberEqubMembershipController::class, 'index']);
         Route::post('equb-memberships', [MemberEqubMembershipController::class, 'store']);
