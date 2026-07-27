@@ -182,6 +182,7 @@ class EqubSubGroupController extends Controller
 
             $currentMember = $request->user()?->member;
 
+
             $members = Member::query()
                 ->with('user')
                 ->where(function ($q) use ($query) {
@@ -192,7 +193,7 @@ class EqubSubGroupController extends Controller
                 })
                 ->when($currentMember, fn ($q) => $q->where('id', '!=', $currentMember->id))
                 ->limit(15)
-                ->get()
+                ->get();
                 ->map(fn ($member) => [
                     'id'        => $member->id,
                     'full_name' => $member->full_name,
