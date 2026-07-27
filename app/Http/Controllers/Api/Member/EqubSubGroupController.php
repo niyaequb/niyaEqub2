@@ -173,30 +173,45 @@ class EqubSubGroupController extends Controller
      */
     public function searchMembers(Request $request)
     {
-        $query = trim($request->input('query', ''));
+        // 1. Accept query, search, or q parameter
+        $rawQuery = $request->input('query') 
+            ?? $request->input('search') 
+            ?? $request->input('q') 
+            ?? '';
+
+        $query = trim($rawQuery);
 
         if (empty($query)) {
             return response()->json(['data' => []]);
         }
 
-        // Handle phone format variations (+251976... vs 0976... vs 251976...)
+        // 2. Clean phone number digits to match all Ethiopian phone variations
         $digits = preg_replace('/[^0-9]/', '', $query);
         $phoneVariants = [$query];
 
         if (!empty($digits)) {
             $phoneVariants[] = $digits;
-            if (str_starts_with($digits, '251') && strlen($digits) >= 4) {
-                $phoneVariants[] = '0' . substr($digits, 3);
-            } elseif ((str_starts_with($digits, '09') || str_starts_with($digits, '07')) && strlen($digits) >= 3) {
+            if (str_starts_with($digits, '251') && strlen($digits) > 3) {
+                $phoneVariants[] = '0' . substr($digits, 3); // 251976... -> 0976...
+                $phoneVariants[] = '+' . $digits;             // 251976... -> +251976...
+            } elseif (str_starts_with($digits, '0')) {
+                $phoneVariants[] = '251' . substr($digits, 1); // 0976... -> 251976...
                 $phoneVariants[] = '+251' . substr($digits, 1);
-                $phoneVariants[] = '251' . substr($digits, 1);
+            } else {
+                $phoneVariants[] = '0' . $digits;
+                $phoneVariants[] = '+251' . $digits;
             }
         }
 
-        $currentMember = $request->user()?->member;
+        $phoneVariants = array_unique($phoneVariants);
 
+        // 3. Current authenticated user's member model
+        $user = $request->user();
+        $currentMemberId = $user?->member?->id;
+
+        // 4. MySQL query execution
         $members = Member::query()
-            ->with('user')
+            ->with(['user:id,name,phone,email'])
             ->where(function ($q) use ($query, $phoneVariants) {
                 $q->whereHas('user', function ($userQuery) use ($query, $phoneVariants) {
                     $userQuery->where(function ($pQ) use ($phoneVariants) {
@@ -204,11 +219,15 @@ class EqubSubGroupController extends Controller
                             $pQ->orWhere('phone', 'like', "%{$variant}%");
                         }
                     })->orWhere('name', 'like', "%{$query}%");
-                })->orWhere('full_name', 'like', "%{$query}%");
+                })
+                ->orWhere('full_name', 'like', "%{$query}%");
             })
-            ->when($currentMember, fn ($q) => $q->where('id', '!=', $currentMember->id))
+            ->when($currentMemberId, fn ($q) => $q->where('id', '!=', $currentMemberId))
             ->limit(15)
             ->get();
+
+        // Debug log to storage/logs/laravel.log
+        Log::info("Member Search query: '{$query}' returned " . $members->count() . " results.");
 
         return response()->json(['data' => $members]);
     }
