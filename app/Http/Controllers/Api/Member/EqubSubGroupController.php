@@ -173,61 +173,29 @@ class EqubSubGroupController extends Controller
      */
     public function searchMembers(Request $request)
     {
-        // 1. Accept query, search, or q parameter
-        $rawQuery = $request->input('query') 
-            ?? $request->input('search') 
+        // Accepts query, search, or q parameter
+        $search = $request->input('search') 
+            ?? $request->input('query') 
             ?? $request->input('q') 
             ?? '';
 
-        $query = trim($rawQuery);
+        $search = trim($search);
 
-        if (empty($query)) {
+        if (empty($search)) {
             return response()->json(['data' => []]);
         }
 
-        // 2. Clean phone number digits to match all Ethiopian phone variations
-        $digits = preg_replace('/[^0-9]/', '', $query);
-        $phoneVariants = [$query];
-
-        if (!empty($digits)) {
-            $phoneVariants[] = $digits;
-            if (str_starts_with($digits, '251') && strlen($digits) > 3) {
-                $phoneVariants[] = '0' . substr($digits, 3); // 251976... -> 0976...
-                $phoneVariants[] = '+' . $digits;             // 251976... -> +251976...
-            } elseif (str_starts_with($digits, '0')) {
-                $phoneVariants[] = '251' . substr($digits, 1); // 0976... -> 251976...
-                $phoneVariants[] = '+251' . substr($digits, 1);
-            } else {
-                $phoneVariants[] = '0' . $digits;
-                $phoneVariants[] = '+251' . $digits;
-            }
-        }
-
-        $phoneVariants = array_unique($phoneVariants);
-
-        // 3. Current authenticated user's member model
-        $user = $request->user();
-        $currentMemberId = $user?->member?->id;
-
-        // 4. MySQL query execution
-        $members = Member::query()
-            ->with(['user:id,name,phone,email'])
-            ->where(function ($q) use ($query, $phoneVariants) {
-                $q->whereHas('user', function ($userQuery) use ($query, $phoneVariants) {
-                    $userQuery->where(function ($pQ) use ($phoneVariants) {
-                        foreach ($phoneVariants as $variant) {
-                            $pQ->orWhere('phone', 'like', "%{$variant}%");
-                        }
-                    })->orWhere('name', 'like', "%{$query}%");
+        // Exact search logic used in Filament Web (EqubSubGroupForm.php)
+        $members = Member::with('user')
+            ->where(function ($query) use ($search) {
+                $query->whereHas('user', function ($q) use ($search) {
+                    $q->where('phone', 'like', "%{$search}%")
+                      ->orWhere('name', 'like', "%{$search}%");
                 })
-                ->orWhere('full_name', 'like', "%{$query}%");
+                ->orWhere('full_name', 'like', "%{$search}%");
             })
-            ->when($currentMemberId, fn ($q) => $q->where('id', '!=', $currentMemberId))
-            ->limit(15)
+            ->limit(50)
             ->get();
-
-        // Debug log to storage/logs/laravel.log
-        Log::info("Member Search query: '{$query}' returned " . $members->count() . " results.");
 
         return response()->json(['data' => $members]);
     }
