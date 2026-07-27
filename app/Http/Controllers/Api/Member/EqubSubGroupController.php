@@ -164,4 +164,45 @@ class EqubSubGroupController extends Controller
             'data'    => $subGroup->load(['equbGroup', 'members.user']),
         ]);
     }
+
+    /**
+     * GET /api/member/members/search?query=...
+     *
+     * Looks up real members by phone or name, for the "add member"
+     * autocomplete fields in the app (previously backed by mock data).
+     */
+    public function searchMembers(Request $request)
+    {
+        try {
+            $query = trim((string) $request->get('query', $request->get('q', '')));
+
+            if ($query === '') {
+                return response()->json(['success' => true, 'data' => []], 200);
+            }
+
+            $currentMember = $request->user()?->member;
+
+            $members = Member::query()
+                ->with('user')
+                ->where(function ($q) use ($query) {
+                    $q->whereHas('user', function ($userQuery) use ($query) {
+                        $userQuery->where('phone', 'like', "%{$query}%")
+                            ->orWhere('name', 'like', "%{$query}%");
+                    })->orWhere('full_name', 'like', "%{$query}%");
+                })
+                ->when($currentMember, fn ($q) => $q->where('id', '!=', $currentMember->id))
+                ->limit(15)
+                ->get()
+                ->map(fn ($member) => [
+                    'id'        => $member->id,
+                    'full_name' => $member->full_name,
+                    'phone'     => $member->user?->phone,
+                ]);
+
+            return response()->json(['success' => true, 'data' => $members], 200);
+        } catch (\Throwable $e) {
+            Log::error('Search Members Error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
 }
