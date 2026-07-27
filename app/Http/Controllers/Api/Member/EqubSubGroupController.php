@@ -173,37 +173,43 @@ class EqubSubGroupController extends Controller
      */
     public function searchMembers(Request $request)
     {
-        try {
-            $query = trim((string) $request->get('query', $request->get('q', '')));
+        $query = trim($request->input('query', ''));
 
-            if ($query === '') {
-                return response()->json(['success' => true, 'data' => []], 200);
-            }
-
-            $currentMember = $request->user()?->member;
-
-
-            $members = Member::query()
-                ->with('user')
-                ->where(function ($q) use ($query) {
-                    $q->whereHas('user', function ($userQuery) use ($query) {
-                        $userQuery->where('phone', 'like', "%{$query}%")
-                            ->orWhere('name', 'like', "%{$query}%");
-                    })->orWhere('full_name', 'like', "%{$query}%");
-                })
-                ->when($currentMember, fn ($q) => $q->where('id', '!=', $currentMember->id))
-                ->limit(15)
-                ->get();
-                ->map(fn ($member) => [
-                    'id'        => $member->id,
-                    'full_name' => $member->full_name,
-                    'phone'     => $member->user?->phone,
-                ]);
-
-            return response()->json(['success' => true, 'data' => $members], 200);
-        } catch (\Throwable $e) {
-            Log::error('Search Members Error: ' . $e->getMessage());
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        if (empty($query)) {
+            return response()->json(['data' => []]);
         }
+
+        // Handle phone format variations (+251976... vs 0976... vs 251976...)
+        $digits = preg_replace('/[^0-9]/', '', $query);
+        $phoneVariants = [$query];
+
+        if (!empty($digits)) {
+            $phoneVariants[] = $digits;
+            if (str_starts_with($digits, '251') && strlen($digits) >= 4) {
+                $phoneVariants[] = '0' . substr($digits, 3);
+            } elseif ((str_starts_with($digits, '09') || str_starts_with($digits, '07')) && strlen($digits) >= 3) {
+                $phoneVariants[] = '+251' . substr($digits, 1);
+                $phoneVariants[] = '251' . substr($digits, 1);
+            }
+        }
+
+        $currentMember = $request->user()?->member;
+
+        $members = Member::query()
+            ->with('user')
+            ->where(function ($q) use ($query, $phoneVariants) {
+                $q->whereHas('user', function ($userQuery) use ($query, $phoneVariants) {
+                    $userQuery->where(function ($pQ) use ($phoneVariants) {
+                        foreach ($phoneVariants as $variant) {
+                            $pQ->orWhere('phone', 'like', "%{$variant}%");
+                        }
+                    })->orWhere('name', 'like', "%{$query}%");
+                })->orWhere('full_name', 'like', "%{$query}%");
+            })
+            ->when($currentMember, fn ($q) => $q->where('id', '!=', $currentMember->id))
+            ->limit(15)
+            ->get();
+
+        return response()->json(['data' => $members]);
     }
 }
